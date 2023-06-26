@@ -12,14 +12,47 @@
 #include "esp_sntp.h"
 #include "nvs_flash.h"
 #include "pm_influxdb.h"
+#include "esp_sleep.h"
 
 #define TAG "plantmonitoring"
 
 #define PM_ADC_BIT_WIDTH ADC_WIDTH_BIT_DEFAULT
+#define uS_TO_S_FACTOR 1000000
 
 int calculate_vdc_mv(int reading)
 {
     return (reading * 2500) / (pow(2, PM_ADC_BIT_WIDTH) - 1);
+}
+
+void sync_time(void)
+{
+    // Set timezone
+    ESP_LOGI(TAG, "Timezone is set to: %s", CONFIG_ESP_NTP_TZ);
+    setenv("TZ", CONFIG_ESP_NTP_TZ, 1);
+    tzset();
+    
+    // Synchronize time with NTP
+    esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
+    ESP_LOGI(TAG, "Getting time via NTP from: %s", CONFIG_ESP_NTP_SERVER);
+    esp_sntp_setservername(0, CONFIG_ESP_NTP_SERVER);
+    esp_sntp_init();
+
+    time_t now = 0;
+    struct tm timeinfo = { 0 };
+    int retry = 0;
+    const int retry_count = 15;
+    while (sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET && ++retry < retry_count) {
+        ESP_LOGI(TAG, "Waiting for system time to be set... (%d/%d)", retry, retry_count);
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+    }
+    assert(retry < retry_count);
+
+    time(&now);
+    localtime_r(&now, &timeinfo);
+
+    char strftime_buf[64];
+    strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
+    ESP_LOGI(TAG, "The current date/time is: %s", strftime_buf);
 }
 
 void app_main(void)
@@ -60,34 +93,8 @@ void app_main(void)
     // Connect to WiFi
     wifi_init();
 
-
-    // Set timezone
-    ESP_LOGI(TAG, "Timezone is set to: %s", CONFIG_ESP_NTP_TZ);
-    setenv("TZ", CONFIG_ESP_NTP_TZ, 1);
-    tzset();
-    
-    // Synchronize time with NTP
-    esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
-    ESP_LOGI(TAG, "Getting time via NTP from: %s", CONFIG_ESP_NTP_SERVER);
-    esp_sntp_setservername(0, CONFIG_ESP_NTP_SERVER);
-    esp_sntp_init();
-
-    time_t now = 0;
-    struct tm timeinfo = { 0 };
-    int retry = 0;
-    const int retry_count = 15;
-    while (sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET && ++retry < retry_count) {
-        ESP_LOGI(TAG, "Waiting for system time to be set... (%d/%d)", retry, retry_count);
-        vTaskDelay(2000 / portTICK_PERIOD_MS);
-    }
-    assert(retry < retry_count);
-
-    time(&now);
-    localtime_r(&now, &timeinfo);
-
-    char strftime_buf[64];
-    strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
-    ESP_LOGI(TAG, "The current date/time is: %s", strftime_buf);
+    // Synchronize time
+    sync_time();
 
     // Configure ADC channels
     adc1_config_width((adc_bits_width_t)ADC_WIDTH_BIT_DEFAULT);
@@ -110,8 +117,12 @@ void app_main(void)
 
             write_influxdb("living_room", TAG_CH[o], value);
         }
-        printf("Restarting in %d seconds...\n", i);
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        printf("Entering deep sleep...\n");
+        esp_deep_sleep(15 * uS_TO_S_FACTOR);
+        printf("Woke up from deep sleep. Connecting WiFi and syncing time.\n");
+
+        wifi_init();
+        sync_time();
     }
     printf("Restarting now.\n");
     fflush(stdout);
