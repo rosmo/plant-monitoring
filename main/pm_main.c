@@ -12,12 +12,18 @@
 #include "esp_sntp.h"
 #include "nvs_flash.h"
 #include "pm_influxdb.h"
+#include "pm_config.h"
 #include "esp_sleep.h"
+#include "esp_mac.h"
 
 #define TAG "plantmonitoring"
 
 #define PM_ADC_BIT_WIDTH ADC_WIDTH_BIT_DEFAULT
 #define uS_TO_S_FACTOR 1000000
+
+mac_to_station **stations = NULL;
+mac_to_station *config = NULL;
+int num_stations = 0;
 
 int calculate_vdc_mv(int reading)
 {
@@ -40,7 +46,9 @@ void sync_time(void)
     time_t now = 0;
     struct tm timeinfo = { 0 };
     int retry = 0;
-    const int retry_count = 15;
+
+    // NTP request is sent every 15 seconds, so wait 25 seconds for sync.
+    const int retry_count = 25;
     while (sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET && ++retry < retry_count) {
         ESP_LOGI(TAG, "Waiting for system time to be set... (%d/%d)", retry, retry_count);
         vTaskDelay(2000 / portTICK_PERIOD_MS);
@@ -53,6 +61,32 @@ void sync_time(void)
     char strftime_buf[64];
     strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
     ESP_LOGI(TAG, "The current date/time is: %s", strftime_buf);
+}
+
+void load_config(void) {
+    uint8_t mac[8] = { 0 };
+    char macstr[24] = { '\0' };
+    esp_err_t err;
+
+    ESP_ERROR_CHECK(esp_read_mac(mac, ESP_MAC_WIFI_STA));
+    for (int i = 0; i < 6; i++) {
+        sprintf((char *)&macstr[i*3], "%02x:", mac[i]);
+    }
+    macstr[17] = '\0';
+    ESP_LOGI(TAG, "WiFi MAC address: %s", macstr);
+
+    stations = get_config_from_url(CONFIG_ESP_CONFIG_URL, &num_stations, &err);
+    ESP_ERROR_CHECK(err);
+
+    ESP_LOGI(TAG, "Configuration has %d stations:", num_stations);
+    for (int i = 0; i < num_stations; i++) {
+        ESP_LOGI(TAG, " %03d MAC: %s Station: %s", i+1, stations[i]->mac, stations[i]->station);
+        if (strcasecmp(stations[i]->mac, macstr) == 0) {
+            config = stations[i];
+        }
+    }
+    assert(config != NULL);
+    ESP_LOGI(TAG, "My station name: %s", config->station);
 }
 
 void app_main(void)
@@ -96,6 +130,9 @@ void app_main(void)
     // Synchronize time
     sync_time();
 
+    // Load config
+    load_config();
+
     // Configure ADC channels
     adc1_config_width((adc_bits_width_t)ADC_WIDTH_BIT_DEFAULT);
     adc1_config_channel_atten(ADC1_CHANNEL_2, ADC_ATTEN_DB_11);
@@ -111,14 +148,14 @@ void app_main(void)
         adc1_reading[2] = adc1_get_raw(ADC1_CHANNEL_4);
 
         for (int o = 0; o < 3; o++) {
-            char value[8] = { '\0' };
+            char value[14] = { '\0' };
             ESP_LOGI(TAG_CH[i], "%d", adc1_reading[o]);        
-            snprintf(value, 8, "%d", calculate_vdc_mv(adc1_reading[o]));
+            snprintf(value, 8, "%u", 4095 - calculate_vdc_mv(adc1_reading[o]));
 
-            write_influxdb("living_room", TAG_CH[o], value);
+            write_influxdb(config->station, TAG_CH[o], value);
         }
         printf("Entering deep sleep...\n");
-        esp_deep_sleep(15 * uS_TO_S_FACTOR);
+        esp_deep_sleep(15 * 60 * uS_TO_S_FACTOR);
         printf("Woke up from deep sleep. Connecting WiFi and syncing time.\n");
 
         wifi_init();

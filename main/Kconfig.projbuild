@@ -64,6 +64,19 @@ menu "Plant Monitoring Configuration"
             bool "WAPI PSK"
     endchoice
 
+    # Configuration URL, fetched on startup. Format is one line per station,
+    # MAC address in hex (lowercase) and station name, separated by space, eg:
+    # 00:00:00:00:00:00 room1
+    # 12:34:56:ab:cd:ef room2
+    #
+    # PROTIP: In Home Assistant, you can create a www/ directory under your config
+    # folder and files there are accessible using http://homeassistant/local/file.txt
+    config ESP_CONFIG_URL
+        string "Configuration URL"
+        default "http://homeassistant.localdomain/local/plants.txt"
+        help
+            Configuration URL.
+
     # Find your TZ string from: https://github.com/nayarsystems/posix_tz_db/blob/master/zones.csv
     config ESP_NTP_TZ
         string "NTP timezone"
