@@ -90,6 +90,12 @@ menu "Plant Monitoring Configuration"
         help
             NTP server hostname.
 
+    config ESP_SYSLOG_SERVER
+        string "Syslog server"
+        default ""
+        help
+            Syslog server hostname. UDP only on port 514.
+
     config ESP_INFLUXDB_HOST
         string "InfluxDB host"
         default "influxdb.localdomain"

@@ -8,6 +8,7 @@
 #include "esp_log.h"
 #include "driver/adc.h"
 #include "pm_wifi.h"
+#include "pm_log.h"
 #include <math.h>
 #include "esp_sntp.h"
 #include "nvs_flash.h"
@@ -129,6 +130,9 @@ void app_main(void)
 
     // Synchronize time
     sync_time();
+    
+    // Init logging
+    init_logging();
 
     // Load config
     load_config();

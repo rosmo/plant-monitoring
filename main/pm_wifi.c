@@ -10,6 +10,8 @@
 #include "lwip/err.h"
 #include "lwip/sys.h"
 
+#include "pm_log.h"
+
 #define PM_ESP_WIFI_SSID      CONFIG_ESP_WIFI_SSID
 #define PM_ESP_WIFI_PASS      CONFIG_ESP_WIFI_PASSWORD
 #define PM_ESP_MAXIMUM_RETRY  CONFIG_ESP_MAXIMUM_RETRY
@@ -54,6 +56,7 @@ static EventGroupHandle_t s_wifi_event_group;
 #define TAG "wifi station"
 
 static int s_retry_num = 0;
+extern char wifiIpAddress[16];
 
 static void event_handler(void* arg, esp_event_base_t event_base,
                                 int32_t event_id, void* event_data)
@@ -72,6 +75,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI(TAG, "Acquired IP address:" IPSTR, IP2STR(&event->ip_info.ip));
+        snprintf(wifiIpAddress, sizeof(wifiIpAddress), IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
