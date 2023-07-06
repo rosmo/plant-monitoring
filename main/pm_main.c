@@ -21,6 +21,7 @@
 
 #define PM_ADC_BIT_WIDTH ADC_WIDTH_BIT_DEFAULT
 #define uS_TO_S_FACTOR 1000000
+#define PM_MEASURE_EVERY_SECS 60
 
 mac_to_station **stations = NULL;
 mac_to_station *config = NULL;
@@ -159,7 +160,7 @@ void app_main(void)
             write_influxdb(config->station, TAG_CH[o], value);
         }
         printf("Entering deep sleep...\n");
-        esp_deep_sleep(15 * 60 * uS_TO_S_FACTOR);
+        esp_deep_sleep(PM_MEASURE_EVERY_SECS * 60 * uS_TO_S_FACTOR);
         printf("Woke up from deep sleep. Connecting WiFi and syncing time.\n");
 
         wifi_init();
