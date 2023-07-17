@@ -18,10 +18,12 @@
 #include "esp_mac.h"
 
 #define TAG "plantmonitoring"
+#define TRUE (1==1)
+#define FALSE (!TRUE)
 
 #define PM_ADC_BIT_WIDTH ADC_WIDTH_BIT_DEFAULT
-#define uS_TO_S_FACTOR 1000000
-#define PM_MEASURE_EVERY_SECS 60
+#define uS_TO_S_FACTOR (uint64_t)1000000
+#define PM_MEASURE_EVERY_MINS (uint64_t)60
 
 mac_to_station **stations = NULL;
 mac_to_station *config = NULL;
@@ -43,19 +45,30 @@ void sync_time(void)
     esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
     ESP_LOGI(TAG, "Getting time via NTP from: %s", CONFIG_ESP_NTP_SERVER);
     esp_sntp_setservername(0, CONFIG_ESP_NTP_SERVER);
-    esp_sntp_init();
-
+    
+    const int total_max_retries = 3;
+    int total_retries = 0;
     time_t now = 0;
     struct tm timeinfo = { 0 };
-    int retry = 0;
+    do {
+        esp_sntp_init();
 
-    // NTP request is sent every 15 seconds, so wait 25 seconds for sync.
-    const int retry_count = 25;
-    while (sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET && ++retry < retry_count) {
-        ESP_LOGI(TAG, "Waiting for system time to be set... (%d/%d)", retry, retry_count);
-        vTaskDelay(2000 / portTICK_PERIOD_MS);
-    }
-    assert(retry < retry_count);
+        int retry = 0;
+
+        // NTP request is sent every 15 seconds, so wait 25 seconds for sync.
+        const int retry_count = 10;
+        while (sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET && ++retry < retry_count) {
+            ESP_LOGI(TAG, "Waiting for system time to be set... (%d/%d)", retry, retry_count);
+            vTaskDelay(2000 / portTICK_PERIOD_MS);
+        }
+        if (retry == retry_count) {
+            total_retries += 1;
+            esp_sntp_stop();
+        } else {
+            break;
+        }
+    } while (total_retries < total_max_retries);
+    assert(total_retries < total_max_retries);
 
     time(&now);
     localtime_r(&now, &timeinfo);
@@ -144,23 +157,33 @@ void app_main(void)
     adc1_config_channel_atten(ADC1_CHANNEL_3, ADC_ATTEN_DB_11);
     adc1_config_channel_atten(ADC1_CHANNEL_4, ADC_ATTEN_DB_11);
     
-    int adc1_reading[3] = {0xcc};
+    int adc1_reading[3][5];
+    int adc1_values[3] = {0, 0, 0};
     const char TAG_CH[][10] = {"plant1", "plant2", "plant3"};
 
-    for (int i = 10; i >= 0; i--) {
-        adc1_reading[0] = adc1_get_raw(ADC1_CHANNEL_2);
-        adc1_reading[1] = adc1_get_raw(ADC1_CHANNEL_3);
-        adc1_reading[2] = adc1_get_raw(ADC1_CHANNEL_4);
-
+    while (TRUE) {
+        for (int i = 0; i < 5; i++) {
+            adc1_reading[0][i] = adc1_get_raw(ADC1_CHANNEL_2);
+            adc1_reading[1][i] = adc1_get_raw(ADC1_CHANNEL_3);
+            adc1_reading[2][i] = adc1_get_raw(ADC1_CHANNEL_4);
+        }
+        for (int i = 0; i < 3; i++) {
+            adc1_values[i] = 0;
+            for (int o = 0; o < 5; o++) {
+                adc1_values[i] += adc1_reading[i][o];
+            }
+            adc1_values[i] = adc1_values[i]/5;
+            ESP_LOGI(TAG_CH[i], "avg=%d", adc1_values[i]);    
+        }
         for (int o = 0; o < 3; o++) {
             char value[14] = { '\0' };
-            ESP_LOGI(TAG_CH[i], "%d", adc1_reading[o]);        
-            snprintf(value, 8, "%u", 4095 - calculate_vdc_mv(adc1_reading[o]));
+                
+            snprintf(value, 8, "%u", 4095 - calculate_vdc_mv(adc1_values[o]));
 
             write_influxdb(config->station, TAG_CH[o], value);
         }
         printf("Entering deep sleep...\n");
-        esp_deep_sleep(PM_MEASURE_EVERY_SECS * 60 * uS_TO_S_FACTOR);
+        esp_deep_sleep(PM_MEASURE_EVERY_MINS * 60 * uS_TO_S_FACTOR);
         printf("Woke up from deep sleep. Connecting WiFi and syncing time.\n");
 
         wifi_init();

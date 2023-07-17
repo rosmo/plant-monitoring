@@ -97,7 +97,7 @@ mac_to_station **get_config_from_url(const char *config_url, int *num_stations, 
 
         *num_stations = 0;
         while (line != NULL) {
-            ESP_LOGI(TAG, "Got line (%s)", line);
+            // ESP_LOGI(TAG, "Got line (%s)", line);
             
             char *line_to_split = strdup(line);
             char *inner_saveptr = line_to_split;
